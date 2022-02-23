@@ -7,6 +7,7 @@ from engine import *
 from export import export_transcript, export_timestamp_transcript, export_metric
 from processing import transform_audio
 from utils import transcript_name
+import jiwer
 
 # import normalise as normalise
 
@@ -32,7 +33,7 @@ if __name__ == '__main__':
 
     for i in range(dataset.size()):
         path, ref_transcript = dataset.get(i)
-
+        print (path)
         # sample rate and mono is engine depending, normalise data
         path = transform_audio(args, path, engine.sample_rate, engine.is_mono, engine.is_normalised)
 

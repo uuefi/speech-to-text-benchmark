@@ -25,7 +25,7 @@ def frame_rate_channel(audio_file_name, head):
 
 def transform_audio(args, path, sample_rate, to_mono, normalise=False):
     # todo: find a better way to hold the cache path here --> args
-    path_target = path.replace('data', 'cache').replace('.wav', '.flac')
+    path_target = path.replace('data', 'cache')#.replace('.wav', '.flac')
     head, tail = os.path.split(path_target)
     os.makedirs(head, exist_ok=True)
 
@@ -37,7 +37,7 @@ def transform_audio(args, path, sample_rate, to_mono, normalise=False):
 
     # remove one pipeline here: helper output to figure out the issue
     tranform_with_librosa(path_target, path, sample_rate, to_mono, normalise)
-    # tranform_with_pydub(path_target, path, sample_rate, to_mono, normalise, info)
+    #tranform_with_pydub(path_target, path, sample_rate, to_mono, normalise, info)
 
     # to be removed: helper output to figure out the issue
     #audiofile.export(path_target, format="flac")

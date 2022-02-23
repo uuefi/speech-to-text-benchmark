@@ -22,11 +22,16 @@ def download_data(dataset_path: str, download_id: str):
 
 
 def transcript_name(wav_path):
-    return wav_path.split(os.path.sep)[-1].replace(".wav", ".txt")
-
+    if os.path.basename(wav_path).split('.')[-1] == 'flac':
+        return wav_path.split(os.path.sep)[-1].replace(".flac", ".txt")
+    if os.path.basename(wav_path).split('.')[-1] == 'wav':
+        return wav_path.split(os.path.sep)[-1].replace(".wav", ".txt")
 
 def transcript_json_name(wav_path):
-    return wav_path.split(os.path.sep)[-1].replace(".wav", ".json")
+    if os.path.basename(wav_path).split('.')[-1] == 'flac':
+        return wav_path.split(os.path.sep)[-1].replace(".flac", ".json")
+    if os.path.basename(wav_path).split('.')[-1] == 'wav':
+        return wav_path.split(os.path.sep)[-1].replace(".wav", ".json")
 
 
 def blob_name(wav_path):

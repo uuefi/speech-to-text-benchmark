@@ -8,8 +8,10 @@ from abc import abstractmethod, ABC
 import config
 import download_data
 from download_data import download_file_from_google_drive, check_data_available
-from config import DATA_LIBRISPEECH_PATH, DATA_CALLHOME_PATH, DOWNLOAD_CALLHOME, DATA_TORSTEN_PATH, DATA_OWN_PATH, \
-    DOWNLOAD_OWN, DOWNLOAD_TORSTEN, DATA_PATH, MINIMUM_NO_WORDS_PER_FILE, NO_OF_FILES_FOR_TEST_MODE
+from config import DATA_LIBRISPEECH_PATH, DATA_CALLHOME_PATH, DATA_NAME_FORSCHERGEIST, DATA_FORSCHERGEIST_PATH, \
+    DOWNLOAD_CALLHOME, DATA_TORSTEN_PATH, DATA_OWN_PATH, \
+    DOWNLOAD_OWN, DOWNLOAD_TORSTEN, DATA_PATH, MINIMUM_NO_WORDS_PER_FILE, NO_OF_FILES_FOR_TEST_MODE, \
+    DATA_NAME_COMMONVOICE, DATA_COMMONVOICE_PATH, DATA_VERBMOBIL_PATH, DATA_NAME_VERBMOBIL
 
 
 class Dataset(object):
@@ -41,6 +43,15 @@ class Dataset(object):
         elif dataset_type == config.DATA_NAME_TORSTEN:
             config.SAMPLE_RATE = config.SAMPLE_RATE_TORSTEN
             return TorstenDataset(sample)
+        elif dataset_type == config.DATA_NAME_FORSCHERGEIST:
+            config.SAMPLE_RATE = config.SAMPLE_RATE_FORSCHERGEIST
+            return Forschergeist(sample)
+        elif dataset_type == config.DATA_NAME_COMMONVOICE:
+            config.SAMPLE_RATE = config.SAMPLE_RATE_COMMONVOICE
+            return CommonVoice(sample)
+        elif dataset_type == config.DATA_NAME_VERBMOBIL:
+            config.SAMPLE_RATE = config.SAMPLE_RATE_VERBMOBIL
+            return Verbmobil(sample)
         elif dataset_type == config.DATA_NAME_OWN:
             config.SAMPLE_RATE = config.SAMPLE_RATE_OWN
             return OwnRecordingsDataset(sample)
@@ -82,6 +93,46 @@ class LibriSpeechDataset(Dataset, ABC):
 
     def __str__(self):
         return 'LibriSpeech'
+
+
+class Forschergeist(Dataset):
+
+    def __init__(self, sample):
+        self._data = list()
+        self.HAS_TRANSCRIPT = True
+
+        if not check_data_available(DATA_FORSCHERGEIST_PATH):
+            download_file_from_google_drive(DATA_FORSCHERGEIST_PATH, DOWNLOAD_FORSCHERGEIST)
+
+        audio_path = os.path.join(DATA_FORSCHERGEIST_PATH, 'audio_snippets/')
+        transcript_path = os.path.join(DATA_FORSCHERGEIST_PATH, 'json/')
+
+        file_no = len(glob.glob(transcript_path + '*.json'))
+        assert file_no > 0, f'No transcripts, check data path {transcript_path}*.json'
+
+        # limit the amount of available files to test mode
+        if sample:
+            print(f"Test mode! Number of files reduced to {NO_OF_FILES_FOR_TEST_MODE}!")
+            file_no = NO_OF_FILES_FOR_TEST_MODE
+
+        for transcript_file in glob.glob(transcript_path + '*.json')[:file_no]:
+            with open(transcript_file, 'r') as f:
+                data = json.load(f)
+            wav_file = os.path.join(audio_path,
+                                    transcript_file.split(os.path.sep)[-1].replace('.json', '.wav'))
+            full_text = ""
+            for d in data:
+                full_text = full_text + d['text'] + '\n'
+            self._data.append((wav_file, full_text))
+
+    def size(self):
+        return len(self._data)
+
+    def get(self, index):
+        return self._data[index]
+
+    def __str__(self):
+        return config.DATA_NAME_FORSCHERGEIST
 
 
 class CallHomeDataset(Dataset):
@@ -190,3 +241,85 @@ class OwnRecordingsDataset(Dataset):
 
     def __str__(self):
         return config.DATA_NAME_OWN
+
+
+class CommonVoice(Dataset):
+
+    def __init__(self, sample):
+        self._data = list()
+        self.HAS_TRANSCRIPT = True
+
+        if not check_data_available(DATA_COMMONVOICE_PATH):
+            download_file_from_google_drive(DATA_COMMONVOICE_PATH, DOWNLOAD_COMMONVOICE)
+
+        audio_path = os.path.join(DATA_COMMONVOICE_PATH, 'audio/')
+        transcript_path = os.path.join(DATA_COMMONVOICE_PATH, 'json/')
+
+        file_no = len(glob.glob(transcript_path + '*.json'))
+        assert file_no > 0, f'No transcripts, check data path {transcript_path}*.json'
+
+        # limit the amount of available files to test mode
+        if sample:
+            print(f"Test mode! Number of files reduced to {NO_OF_FILES_FOR_TEST_MODE}!")
+            file_no = NO_OF_FILES_FOR_TEST_MODE
+
+        for transcript_file in glob.glob(transcript_path + '*.json')[:file_no]:
+            with open(transcript_file, 'r') as f:
+                data = json.load(f)
+            wav_file = os.path.join(audio_path,
+                                    transcript_file.split(os.path.sep)[-1].replace('.json', '.wav'))
+            full_text = data['text']
+            self._data.append((wav_file, full_text))
+
+
+    def size(self):
+        return len(self._data)
+
+
+    def get(self, index):
+        return self._data[index]
+
+
+    def __str__(self):
+        return config.DATA_NAME_COMMONVOICE
+
+
+class Verbmobil(Dataset):
+
+    def __init__(self, sample):
+        self._data = list()
+        self.HAS_TRANSCRIPT = True
+
+        if not check_data_available(DATA_VERBMOBIL_PATH):
+            download_file_from_google_drive(DATA_VERBMOBIL_PATH, config.DOWNLOAD_VERBMOBIL)
+
+        audio_path = os.path.join(DATA_VERBMOBIL_PATH, 'audio/')
+        transcript_path = os.path.join(DATA_VERBMOBIL_PATH, 'json/')
+
+        file_no = len(glob.glob(transcript_path + '*.json'))
+        assert file_no > 0, f'No transcripts, check data path {transcript_path}*.json'
+
+        # limit the amount of available files to test mode
+        if sample:
+            print(f"Test mode! Number of files reduced to {NO_OF_FILES_FOR_TEST_MODE}!")
+            file_no = NO_OF_FILES_FOR_TEST_MODE
+
+        for transcript_file in glob.glob(transcript_path + '*.json')[:file_no]:
+            with open(transcript_file, 'r') as f:
+                data = json.load(f)
+            wav_file = os.path.join(audio_path,
+                                    transcript_file.split(os.path.sep)[-1].replace('.json', '.wav'))
+            full_text = data['text']
+            self._data.append((wav_file, full_text))
+
+
+    def size(self):
+        return len(self._data)
+
+
+    def get(self, index):
+        return self._data[index]
+
+
+    def __str__(self):
+        return config.DATA_NAME_VERBMOBIL

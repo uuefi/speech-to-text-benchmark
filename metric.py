@@ -13,16 +13,21 @@ def init_metric():
         'word_error_count': [],
         'wer': [],
         'mer': [],
-        'wil': []
+        'wil': [],
+        'ref_transcript_transform': [],
+        'pred_transcript_transform': []
     }
 
 
 def calculate_metrics(metric, path, true_words, pred_words):
+
     transformation = jiwer.Compose([
         jiwer.ToLowerCase(),
         jiwer.RemoveMultipleSpaces(),
+        jiwer.RemovePunctuation(),
         jiwer.RemoveKaldiNonWords(),  # <unk>, [laugh] etc.
         jiwer.RemoveWhiteSpace(replace_by_space=False),  # whitespace characters are , \t, \n, \r, \x0b and \x0c
+        jiwer.RemoveEmptyStrings(),
         jiwer.SentencesToListOfWords(word_delimiter=" ")
     ])
 
@@ -47,4 +52,6 @@ def calculate_metrics(metric, path, true_words, pred_words):
     metric['ref_transcript_word_count'].append(len(true_words))
     metric['pred_transcript_word_count'].append(len(pred_words))
 
+    metric['ref_transcript_transform'].append(transformation(true_words))
+    metric['pred_transcript_transform'].append(transformation(pred_words))
     return metric

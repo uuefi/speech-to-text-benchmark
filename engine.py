@@ -10,12 +10,13 @@ import boto3
 import numpy as np
 import requests
 import soundfile
-from deepspeech import Model
+# from deepspeech import Model
+# https://discourse.mozilla.org/t/m1-macbook/79614
 # from google.cloud import speech
 from google.cloud import speech
 from google.cloud import storage
 # to be removed: helper output to figure out the issue
-#from google.cloud import speech1b1 as speech
+# from google.cloud import speech1b1 as speech
 # from google.cloud.speech_v1 import enums
 # from google.cloud.speech_v1 import types
 # from pocketsphinx import get_model_path
@@ -29,12 +30,18 @@ from resources.sileromodels.utils import (init_jit_model,
 from silero_engine import get_model, get_device
 from utils import blob_name
 from vosk_engine import load_model, transform_and_transcribe
+import swagger_client
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, ResourceTypes, AccountSasPermissions, \
+    generate_account_sas
+from datetime import datetime, timedelta
+
 
 
 class ASREngines(Enum):
     # online
     AMAZON_TRANSCRIBE = "AMAZON_TRANSCRIBE"
     GOOGLE_SPEECH_TO_TEXT = "GOOGLE_SPEECH_TO_TEXT"
+    AZURE_ENGINE = "AZURE_ENGINE"
 
     # edge
     CMU_POCKET_SPHINX = 'CMU_POCKET_SPHINX'
@@ -61,7 +68,7 @@ class ASREngine(object):
         elif engine_type is ASREngines.CMU_POCKET_SPHINX:
             return CMUPocketSphinxASREngine()
         elif engine_type is ASREngines.GOOGLE_SPEECH_TO_TEXT:
-            return GoogleSpeechToText(dataset_name)
+            return GoogleSpeechToText()
         elif engine_type is ASREngines.MOZILLA_DEEP_SPEECH:
             return MozillaDeepSpeechASREngine()
         elif engine_type is ASREngines.PICOVOICE_CHEETAH:
@@ -75,7 +82,9 @@ class ASREngine(object):
         elif engine_type is ASREngines.SILERO:
             return SILEROASREngine()
         elif engine_type is ASREngines.VOSK:
-            return VOSKASREngine(config.MODEL_VOSK_PATH)
+            return VOSKASREngine(config.MODEL_VOSK_SMALL_PATH)
+        elif engine_type is ASREngines.AZURE_ENGINE:
+            return Azure_Engine()
 
         else:
             raise ValueError("cannot create %s of type '%s'" % (cls.__name__, engine_type))
@@ -126,13 +135,16 @@ class AmazonTranscribe(ASREngine):
             full = json.loads(content.content.decode('utf8'))
             list_of_timestamp_words = []
             for item in full['results']['items']:
-                list_of_timestamp_words.append(
-                    dict(start_ts=item['start_time'], end_ts=item['end_time'], word=item['alternatives']['content']))
+                if item[
+                    'type'] == 'pronunciation':  # items of type punctuation don't have a start_time and are causing trouble
+                    list_of_timestamp_words.append(
+                        dict(start_ts=item['start_time'], end_ts=item['end_time'],
+                             word=item['alternatives'][0]['content']))
 
             res = json.loads(content.content.decode('utf8'))['results']['transcripts'][0]['transcript']
             res = res.translate(str.maketrans('', '', string.punctuation))
 
-            write_cache(res, list_of_timestamp_words)
+            # write_cache(res, list_of_timestamp_words)
 
         return res, list_of_timestamp_words
 
@@ -163,14 +175,13 @@ def upload_blob(bucket_name, source_file_name, destination_blob_name):
 
 
 class GoogleSpeechToText(ASREngine):
-    #todo: fix this fucking bullshit
-    def __init__(self, bucket_name):
+    # todo: fix this fucking bullshit
+    def __init__(self):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config.AUTH_GOOGLE_PATH
         self.sample_rate = config.SAMPLE_RATE_GOOGLE
         self.is_mono = config.IS_MONO_GOOGLE
         self.is_normalised = config.IS_NORMALISE_GOOGLE
-
-        self.bucket_name = bucket_name
+        self.bucket_name = config.BUCKET_NAME_GOOGLE
         # self.bucket = self.create_bucket_class_location()
 
         self._client = speech.SpeechClient()
@@ -201,14 +212,13 @@ class GoogleSpeechToText(ASREngine):
 
     def transcribe(self, path):
         # example https://cloud.google.com/speech-to-text/docs/samples/speech-transcribe-async-gcs
-
         # with open(path, 'rb') as f:
         #    content = f.read()
-        # client = speech.SpeechClient()7
-
+        # client = speech.SpeechClient()
         # akzeptiert auch keine manuell gepolished Daten via ffmpeg -i test.wav -acodec pcm_s16le -ac 1 -ar 16000 out.wav oder
-        path = '/home/manu/Downloads/bg.wav'
-            # '/home/manu/Desktop/Lukas/00_recoro/benchmark/speech-to-text-benchmark/cache/callhome_de/audio_snippets/6312.wav'
+        # path = '/home/manu/Downloads/bg.wav'
+        # '/home/manu/Desktop/Lukas/00_recoro/benchmark/speech-to-text-benchmark/cache/callhome_de/audio_snippets/6312.wav'
+
         upload_blob(self.bucket_name, path, blob_name(path))
         gcs_uri = f'gs://{self.bucket_name}/{blob_name(path)}'
         print(gcs_uri)
@@ -231,9 +241,10 @@ class GoogleSpeechToText(ASREngine):
         encoding = speech.RecognitionConfig.AudioEncoding.FLAC
         # b) #speech.RecognitionConfig.AudioEncoding.LINEAR16,
         config_google = speech.RecognitionConfig(
-            encoding=encoding,
+            # encoding=encoding,
             sample_rate_hertz=self.sample_rate,
-            language_code=config.LANGUAGE_GOOGLE)
+            language_code=config.LANGUAGE_GOOGLE,
+            enable_word_time_offsets=True)
 
         operation = self._client.long_running_recognize(config=config_google, audio=audio)
         print("Waiting for operation to complete...")
@@ -242,16 +253,191 @@ class GoogleSpeechToText(ASREngine):
         for result in response.results:
             print(u"Transcript: {}".format(result.alternatives[0].transcript))
         # response = self._client.recognize(config_google, audio)
-
         res = ' '.join(result.alternatives[0].transcript for result in response.results)
-        # res = res.translate(str.maketrans('', '', string.punctuation))
+        # r es = dict(transcripts=res)
+        # res = json.dumps(res, ensure_ascii=False)
 
-        #todo: json with timestamps
+        # todo: json with timestamps
+        list_of_timestamp_words = []
 
-        return res
+        for result in response.results:
+            alternative = result.alternatives[0]
+            # print("Transcript: {}".format(alternative.transcript))
+            # print("Confidence: {}".format(alternative.confidence))
+
+            for word_info in alternative.words:
+                word = word_info.word
+                start_time = word_info.start_time
+                end_time = word_info.end_time
+                list_of_timestamp_words.append(
+                    dict(start_ts=str(word_info.start_time), end_ts=str(word_info.end_time), word=str(word_info.word)))
+                # print(f"Word: {word}, start_time: {start_time.total_seconds()}, end_time: {end_time.total_seconds()}")
+
+        return res, list_of_timestamp_words
 
     def __str__(self):
         return 'Google Speech-to-Text'
+
+
+class Azure_Engine(ASREngine):
+
+    def __init__(self):
+        os.environ["AZURE_STORAGE_CONNECTION_STRING"] = config.STORAGE_CONNECTION_STRING_AZURE
+        self.sample_rate = config.SAMPLE_RATE_AZURE
+        self.is_mono = config.IS_MONO_AZURE
+        self.is_normalised = config.IS_NORMALISE_AZURE
+        self.language = config.LANGUAGE_AZURE
+
+        # in case a specific container should be used
+        self.container_name = config.CONTAINER_NAME_AZURE
+
+        # create container
+        self.blob = BlobServiceClient.from_connection_string(os.environ["AZURE_STORAGE_CONNECTION_STRING"])
+        self.blob_container = str(uuid.uuid4())
+        self.blob.create_container(self.blob_container, public_access='blob')
+
+    def upload_to_container(self, path):
+        """
+            Upload audio file to a newly created container
+            """
+        # Create a blob object with the local file name
+        blob_object = os.path.basename(path)
+        # Create a blob client using the local file name as the name for the blob
+        blob_client = self.blob.get_blob_client(container=self.blob_container,
+                                                blob=blob_object)  # change to specific container if needed
+        blob_client.max_single_put_size = 44 * 1024 * 1024
+        print("\nUploading to Azure Storage as blob:\n\t" + blob_object)
+
+        # Upload the created file
+        with open(path, "rb") as data:
+            blob_client.upload_blob(data, overwrite=True)
+
+        url = [blob_client.url]
+
+        return url
+
+    def transcribe_from_container(self, url, properties):
+        """
+            Transcribe all files in the container located at `uri` using the settings specified in `properties`
+            using the base model for the specified locale.
+            """
+        transcription_definition = swagger_client.Transcription(
+            display_name=self.__str__(),
+            description='Great description',
+            locale=self.language,
+            content_urls=url,
+            properties=properties
+        )
+        return transcription_definition
+
+    def _paginate(self, api, paginated_object):
+        """
+        The autogenerated client does not support pagination. This function returns a generator over
+        all items of the array that the paginated object `paginated_object` is part of.
+        """
+        yield from paginated_object.values
+        typename = type(paginated_object).__name__
+        auth_settings = ["apiKeyHeader", "apiKeyQuery"]
+        while paginated_object.next_link:
+            link = paginated_object.next_link[len(api.api_client.configuration.host):]
+            paginated_object, status, headers = api.api_client.call_api(link, "GET",
+                                                                        response_type=typename,
+                                                                        auth_settings=auth_settings)
+
+            if status == 200:
+                yield from paginated_object.values
+            else:
+                raise Exception(f"could not receive paginated data: status {status}")
+
+    def transcribe(self, path):
+
+        # todo: cache solution
+        if config.USE_CACHE:
+            res, list_of_timestamp_words = get_cache(path)
+        else:
+            res, list_of_timestamp_words = None, []
+
+        if res is None or list_of_timestamp_words is None:
+
+            # configure API key authorization: subscription_key
+            configuration = swagger_client.Configuration()
+            configuration.api_key["Ocp-Apim-Subscription-Key"] = config.KEY_AZURE
+            configuration.host = f"https://{config.REGION_AZURE}.api.cognitive.microsoft.com/speechtotext/v3.0"
+
+            # create the client object and authenticate
+            client = swagger_client.ApiClient(configuration)
+
+            # create an instance of the transcription api class
+            api = swagger_client.DefaultApi(api_client=client)
+
+            # Specify transcription properties by passing a dict to the properties parameter. See https://docs.microsoft.com/azure/cognitive-services/speech-service/batch-transcription#configuration-properties
+            # for supported parameters.
+            properties = {
+                # "punctuationMode": "DictatedAndAutomatic",
+                # "profanityFilterMode": "Masked",
+                "wordLevelTimestampsEnabled": True,
+                # "diarizationEnabled": True,
+                # "destinationContainerUrl": "https://blobazure123.blob.core.windows.net/firstcontainer?sp=r&st=2022-01-31T17:39:01Z&se=2022-02-01T01:39:01Z&spr=https&sv=2020-08-04&sr=c&sig=P5rKh1FDxKE%2BfKCQyC9V8j36176gQHhGMLP8zRYLIJs%3D",
+                "timeToLive": "PT1H"
+            }
+
+            # Upload audio file to container, store blob url in blob_uri
+            url = self.upload_to_container(path)
+
+            # transcribe all files from a container.
+            transcription_definition = self.transcribe_from_container(url, properties)
+
+            created_transcription, status, headers = api.create_transcription_with_http_info(
+                transcription=transcription_definition)
+
+            # get the transcription Id from the location URI
+            transcription_id = headers["location"].split("/")[-1]
+
+            # Print information about the created transcription.
+            print(f"Created new transcription with id '{transcription_id}' in region {config.REGION_AZURE}")
+            print("Checking status.")
+
+            completed = False
+
+            while not completed:
+                # wait for 5 seconds before refreshing the transcription status
+                time.sleep(5)
+
+                transcription = api.get_transcription(transcription_id)
+                print(f"Transcriptions status: {transcription.status}")
+
+                if transcription.status in ("Failed", "Succeeded"):
+                    completed = True
+
+                if transcription.status == "Succeeded":
+                    pag_files = api.get_transcription_files(transcription_id)
+                    for file_data in self._paginate(api, pag_files):
+                        if file_data.kind != "Transcription":
+                            continue
+
+                        audio_filename = file_data.name
+                        results_url = file_data.links.content_url
+                        results = requests.get(results_url)
+                        # print(f"Results for {audio_filename}:\n{results.content.decode('utf-8')}")
+                        full = json.loads(results.content.decode('utf-8'))
+                        res = full['combinedRecognizedPhrases'][0]['lexical']
+                        # res = dict(transcripts=res)
+                        # res = json.dumps(res, ensure_ascii=False)
+
+                        # create json with timestamps
+                        for word_info in full['recognizedPhrases'][0]['nBest'][0]['words']:
+                            word = word_info['word']
+                            list_of_timestamp_words.append(
+                                dict(word=word))
+                            # print(f"Word: {word}, start_time: {start_time.total_seconds()}, end_time: {end_time.total_seconds()}")
+
+                elif transcription.status == "Failed":
+                    print(f"Transcription failed: {transcription.properties.error.message}")
+
+        return res, list_of_timestamp_words
+
+    def __str__(self):
+        return 'AZURE ENGINE'
 
 
 class CMUPocketSphinxASREngine(ASREngine):
@@ -294,7 +480,8 @@ class CMUPocketSphinxASREngine(ASREngine):
         return 'CMUPocketSphinx'
 
 
-class MozillaDeepSpeechASREngine(ASREngine):
+
+'''class MozillaDeepSpeechASREngine(ASREngine):
     # todo: add timestamp version
     def __init__(self):
         # todo: set data processing
@@ -317,6 +504,7 @@ class MozillaDeepSpeechASREngine(ASREngine):
 
     def __str__(self):
         return 'Mozilla DeepSpeech'
+'''
 
 
 class PicovoiceCheetahASREngine(ASREngine):
@@ -357,6 +545,9 @@ class PicovoiceLeopardASREngine(ASREngine):
         self._acoustic_model_path = os.path.join(leopard_dir, 'acoustic_model.pv')
         self._language_model_path = os.path.join(leopard_dir, lm)
         self._license_path = os.path.join(leopard_dir, 'leopard_eval_linux.lic')
+        self.sample_rate = config.SAMPLE_RATE_PICOVOICE
+        self.is_mono = config.IS_MONO_PICOVOICE
+        self.is_normalised = config.IS_NORMALISE_PICOVOICE
 
     def transcribe(self, path):
         args = [
